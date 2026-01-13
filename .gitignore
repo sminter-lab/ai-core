@@ -1,0 +1,82 @@
+# ===============================
+# OS
+# ===============================
+.DS_Store
+.DS_Store?
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# ===============================
+# Python
+# ===============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+venv/
+.env
+.env.*
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+
+# ===============================
+# Logs & Runtime
+# ===============================
+logs/
+*.log
+
+# ===============================
+# Data (NEVER COMMIT)
+# ===============================
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ===============================
+# AI / ML
+# ===============================
+models/**/*.bin
+models/**/*.pt
+models/**/*.safetensors
+models/**/*.gguf
+models/**/*.onnx
+
+# Ollama / llama.cpp
+.ollama/
+llama.cpp/
+.cache/
+.cache/**
+
+# ===============================
+# Docker
+# ===============================
+*.pid
+*.sock
+
+# ===============================
+# Editors
+# ===============================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===============================
+# Terraform
+# ===============================
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# ===============================
+# Secrets
+# ===============================
+secrets/
+*.key
+*.pem
