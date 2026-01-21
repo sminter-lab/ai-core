@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 from notion_client import Client
 
+load_dotenv()
 
 def now_date():
     """Return Notion-compatible date payload"""

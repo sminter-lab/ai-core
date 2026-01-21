@@ -21,6 +21,8 @@ venv/
 .env
 .env.*
 !.env.example
+.venv/
+ai_output.txt
 pip-wheel-metadata/
 .pytest_cache/
 .mypy_cache/
