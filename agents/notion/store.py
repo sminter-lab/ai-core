@@ -10,6 +10,7 @@ from typing import Any, Optional
 from notion_client import Client
 from notion_client.errors import APIResponseError
 
+
 # ----------------------------
 # Helpers
 # ----------------------------
@@ -35,10 +36,11 @@ def _is_missing_db_error(e: Exception) -> bool:
         return (
             "could not find database" in msg
             or "object not found" in msg
-            or "404" in msg
             or "not found" in msg
+            or "404" in msg
         )
     return False
+
 
 # ----------------------------
 # Config
@@ -47,7 +49,7 @@ def _is_missing_db_error(e: Exception) -> bool:
 @dataclass(frozen=True)
 class NotionStoreConfig:
     token: str
-    database_ids: list[str]          # ordered fallback list
+    database_ids: list[str]   # ordered fallback list
     cache_path: Path
     log_path: Path
 
@@ -63,7 +65,6 @@ def load_config() -> NotionStoreConfig:
     if raw_ids:
         database_ids = _split_csv_env(raw_ids)
     else:
-        # Backward compatible
         single = os.getenv("NOTION_DATABASE_ID", "").strip()
         database_ids = [single] if single else []
 
@@ -78,7 +79,13 @@ def load_config() -> NotionStoreConfig:
     _safe_mkdir(cache_path)
     _safe_mkdir(log_path)
 
-    return NotionStoreConfig(token=token, database_ids=database_ids, cache_path=cache_path, log_path=log_path)
+    return NotionStoreConfig(
+        token=token,
+        database_ids=database_ids,
+        cache_path=cache_path,
+        log_path=log_path,
+    )
+
 
 # ----------------------------
 # Store
@@ -86,23 +93,24 @@ def load_config() -> NotionStoreConfig:
 
 class NotionDashboardStore:
     """
-    Canonical Notion dashboard updater.
     Search-first upsert:
       - Find row by Category + Metric
       - Update if exists
       - Create if missing
+
     Includes:
       - local cache (category|metric -> page_id)
       - ndjson log of updates
       - multi-database fallback (NOTION_DATABASE_IDS)
+      - robust Notion DB query (works even if notion_client lacks databases.query)
     """
 
-    # Notion property names (must match your DB schema)
-    PROP_CATEGORY = "Category"        # title
-    PROP_METRIC = "Metric"           # rich_text
-    PROP_VALUE = "Value"             # rich_text
-    PROP_AI_TEXT = "AI Analysis"     # rich_text
-    PROP_AI_DATE = "Last AI Run"     # date
+    # Property names (must match your Notion DB schema)
+    PROP_CATEGORY = "Category"   # title
+    PROP_METRIC = "Metric"       # rich_text
+    PROP_VALUE = "Value"         # rich_text
+    PROP_AI_TEXT = "AI Analysis" # rich_text
+    PROP_AI_DATE = "Last AI Run" # date
 
     def __init__(self, cfg: NotionStoreConfig):
         self.cfg = cfg
@@ -126,14 +134,17 @@ class NotionDashboardStore:
         return {}
 
     def _save_cache(self) -> None:
-        self.cache_path.write_text(json.dumps(self.cache, indent=2, sort_keys=True), encoding="utf-8")
+        self.cache_path.write_text(
+            json.dumps(self.cache, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
 
     def _append_log(self, payload: dict[str, Any]) -> None:
         line = json.dumps(payload, ensure_ascii=False)
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
 
-    # -------- notion utils --------
+    # -------- Notion property payload builders --------
 
     def _rich_text(self, content: str) -> dict[str, Any]:
         return {"rich_text": [{"type": "text", "text": {"content": content}}]}
@@ -143,6 +154,39 @@ class NotionDashboardStore:
 
     def _date(self) -> dict[str, Any]:
         return {"date": notion_date_payload()}
+
+    # -------- Notion database query (robust across notion_client versions) --------
+
+    def _db_query(self, database_id: str, *, filter_obj: Optional[dict[str, Any]] = None, page_size: int = 1) -> dict[str, Any]:
+        """
+        Try all known query APIs:
+          1) client.databases.query(...)
+          2) client.database.query(...)
+          3) client.request("POST", "databases/<id>/query", ...)
+        """
+        payload: dict[str, Any] = {"page_size": page_size}
+        if filter_obj is not None:
+            payload["filter"] = filter_obj
+
+        # 1) Common modern notion_client
+        try:
+            if hasattr(self.client, "databases") and hasattr(self.client.databases, "query"):
+                return self.client.databases.query(database_id=database_id, **payload)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        # 2) Some variants exposed "database"
+        try:
+            if hasattr(self.client, "database") and hasattr(self.client.database, "query"):
+                return self.client.database.query(database_id=database_id, **payload)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        # 3) Lowest-level request (works even if endpoint wrappers are missing)
+        # notion_client request path is relative, e.g. "databases/<id>/query"
+        return self.client.request("POST", f"databases/{database_id}/query", json=payload)
+
+    # -------- internal ops --------
 
     def _find_page_id(self, category: str, metric: str) -> Optional[str]:
         """
@@ -154,18 +198,17 @@ class NotionDashboardStore:
 
         last_err: Optional[Exception] = None
 
+        # Filter: Category is a title property; Metric is rich_text
+        filter_obj = {
+            "and": [
+                {"property": self.PROP_CATEGORY, "title": {"equals": category}},
+                {"property": self.PROP_METRIC, "rich_text": {"equals": metric}},
+            ]
+        }
+
         for dbid in self.database_ids:
             try:
-                resp = self.client.databases.query(
-                    database_id=dbid,
-                    filter={
-                        "and": [
-                            {"property": self.PROP_CATEGORY, "title": {"equals": category}},
-                            {"property": self.PROP_METRIC, "rich_text": {"equals": metric}},
-                        ]
-                    },
-                    page_size=1,
-                )
+                resp = self._db_query(dbid, filter_obj=filter_obj, page_size=1)
                 results = resp.get("results", [])
                 if not results:
                     continue
@@ -177,13 +220,10 @@ class NotionDashboardStore:
 
             except Exception as e:
                 last_err = e
-                # If the integration can't see this DB, try next DB
                 if _is_missing_db_error(e):
                     continue
                 raise
 
-        # If every DB failed only because it was missing/not shared, treat as not found.
-        # If something else happened, we would have raised already.
         _ = last_err
         return None
 
