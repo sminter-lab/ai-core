@@ -1,169 +1,263 @@
-diff --git a/agents/notion/store.py b/agents/notion/store.py
-index 0000000..1111111 100644
---- a/agents/notion/store.py
-+++ b/agents/notion/store.py
-@@ -1,18 +1,34 @@
- from __future__ import annotations
-+from typing import Iterable, Optional, Tuple
- from dotenv import load_dotenv
- load_dotenv()
- import json
- import os
- from dataclasses import dataclass
- from datetime import datetime, timezone
- from pathlib import Path
- 
- from notion_client import Client
-+from notion_client.errors import APIResponseError
- 
- 
- @dataclass
- class NotionConfig:
-     notion_api_key: str
--    notion_database_id: str
-+    # Primary DB (backward compatible)
-+    notion_database_id: str
-+    # Optional list of DBs to try in order
-+    notion_database_ids: list[str]
- 
- 
- def load_config() -> NotionConfig:
-     api_key = os.getenv("NOTION_API_KEY", "").strip()
-     if not api_key:
-         raise RuntimeError("Missing NOTION_API_KEY")
- 
--    dbid = os.getenv("NOTION_DATABASE_ID", "").strip()
--    if not dbid:
--        raise RuntimeError("Missing NOTION_DATABASE_ID")
-+    # New: support multiple DBs (comma-separated), while staying compatible with NOTION_DATABASE_ID
-+    raw_ids = os.getenv("NOTION_DATABASE_IDS", "").strip()
-+    if raw_ids:
-+        dbids = [x.strip() for x in raw_ids.split(",") if x.strip()]
-+        if not dbids:
-+            raise RuntimeError("NOTION_DATABASE_IDS is set but empty after parsing")
-+        dbid = dbids[0]
-+    else:
-+        dbid = os.getenv("NOTION_DATABASE_ID", "").strip()
-+        if not dbid:
-+            raise RuntimeError("Missing NOTION_DATABASE_ID (or set NOTION_DATABASE_IDS)")
-+        dbids = [dbid]
- 
--    return NotionConfig(notion_api_key=api_key, notion_database_id=dbid)
-+    return NotionConfig(notion_api_key=api_key, notion_database_id=dbid, notion_database_ids=dbids)
- 
- 
- class NotionDashboardStore:
-     def __init__(self, config: NotionConfig):
-         self.config = config
-         self.client = Client(auth=config.notion_api_key)
-+        self.dbids = config.notion_database_ids or [config.notion_database_id]
-+
-+    def _iter_dbids(self) -> Iterable[str]:
-+        # Always try configured list first
-+        for d in self.dbids:
-+            if d:
-+                yield d
-+
-+    def _is_db_missing_error(self, e: Exception) -> bool:
-+        # Notion "Could not find database with ID" / 404s etc.
-+        if isinstance(e, APIResponseError):
-+            msg = str(e).lower()
-+            return ("could not find database" in msg) or ("object not found" in msg) or ("404" in msg)
-+        return False
- 
-     def _find_row_page_id(self, category: str, metric: str) -> str | None:
--        resp = self.client.databases.query(
--            database_id=self.config.notion_database_id,
--            filter={
--                "and": [
--                    {"property": "Category", "title": {"equals": category}},
--                    {"property": "Metric", "rich_text": {"equals": metric}},
--                ]
--            },
--        )
--        results = resp.get("results", [])
--        if not results:
--            return None
--        return results[0]["id"]
-+        last_err: Exception | None = None
-+        for dbid in self._iter_dbids():
-+            try:
-+                resp = self.client.databases.query(
-+                    database_id=dbid,
-+                    filter={
-+                        "and": [
-+                            {"property": "Category", "title": {"equals": category}},
-+                            {"property": "Metric", "rich_text": {"equals": metric}},
-+                        ]
-+                    },
-+                )
-+                results = resp.get("results", [])
-+                if not results:
-+                    # Nothing found in this DB; try the next one
-+                    continue
-+                return results[0]["id"]
-+            except Exception as e:
-+                last_err = e
-+                # If DB missing/not shared, fall through to next DB
-+                if self._is_db_missing_error(e):
-+                    continue
-+                # If it's some other error, bubble it up
-+                raise
-+        # If we tried everything and got only missing DB errors, return None (so caller can create)
-+        # If there was some error, raise the last one only if it wasn't a missing-db kind.
-+        return None
- 
-     def upsert_value(self, category: str, metric: str, value: str, ai_text: str | None = None) -> None:
-         page_id = self._find_row_page_id(category, metric)
-         now = datetime.now(timezone.utc).isoformat()
- 
-         if page_id:
-             props = {
-                 "Value": {"rich_text": [{"type": "text", "text": {"content": value}}]},
-                 "Last AI Run": {"date": {"start": now}},
-             }
-             if ai_text is not None:
-                 props["AI Analysis"] = {"rich_text": [{"type": "text", "text": {"content": ai_text}}]}
- 
-             self.client.pages.update(page_id=page_id, properties=props)
-             return
- 
--        # create if not found
--        props = {
--            "Category": {"title": [{"type": "text", "text": {"content": category}}]},
--            "Metric": {"rich_text": [{"type": "text", "text": {"content": metric}}]},
--            "Value": {"rich_text": [{"type": "text", "text": {"content": value}}]},
--            "Last AI Run": {"date": {"start": now}},
--        }
--        if ai_text is not None:
--            props["AI Analysis"] = {"rich_text": [{"type": "text", "text": {"content": ai_text}}]}
--
--        self.client.pages.create(
--            parent={"database_id": self.config.notion_database_id},
--            properties=props,
--        )
-+        # create if not found: try each DB until create succeeds
-+        props = {
-+            "Category": {"title": [{"type": "text", "text": {"content": category}}]},
-+            "Metric": {"rich_text": [{"type": "text", "text": {"content": metric}}]},
-+            "Value": {"rich_text": [{"type": "text", "text": {"content": value}}]},
-+            "Last AI Run": {"date": {"start": now}},
-+        }
-+        if ai_text is not None:
-+            props["AI Analysis"] = {"rich_text": [{"type": "text", "text": {"content": ai_text}}]}
-+
-+        last_err: Exception | None = None
-+        for dbid in self._iter_dbids():
-+            try:
-+                self.client.pages.create(
-+                    parent={"database_id": dbid},
-+                    properties=props,
-+                )
-+                return
-+            except Exception as e:
-+                last_err = e
-+                if self._is_db_missing_error(e):
-+                    continue
-+                raise
-+
-+        raise RuntimeError(f"All Notion databases failed on create. Last error: {last_err}")
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+from notion_client import Client
+from notion_client.errors import APIResponseError
+
+# ----------------------------
+# Helpers
+# ----------------------------
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def notion_date_payload() -> dict[str, str]:
+    return {"start": now_iso()}
+
+def _safe_mkdir(p: Path) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+def _split_csv_env(value: str) -> list[str]:
+    return [x.strip() for x in value.split(",") if x.strip()]
+
+def _is_missing_db_error(e: Exception) -> bool:
+    """
+    True when the integration can't see a database (not shared / wrong workspace / wrong id).
+    """
+    if isinstance(e, APIResponseError):
+        msg = str(e).lower()
+        return (
+            "could not find database" in msg
+            or "object not found" in msg
+            or "404" in msg
+            or "not found" in msg
+        )
+    return False
+
+# ----------------------------
+# Config
+# ----------------------------
+
+@dataclass(frozen=True)
+class NotionStoreConfig:
+    token: str
+    database_ids: list[str]          # ordered fallback list
+    cache_path: Path
+    log_path: Path
+
+    @property
+    def primary_database_id(self) -> str:
+        return self.database_ids[0]
+
+
+def load_config() -> NotionStoreConfig:
+    token = os.getenv("NOTION_API_KEY", "").strip()
+
+    raw_ids = os.getenv("NOTION_DATABASE_IDS", "").strip()
+    if raw_ids:
+        database_ids = _split_csv_env(raw_ids)
+    else:
+        # Backward compatible
+        single = os.getenv("NOTION_DATABASE_ID", "").strip()
+        database_ids = [single] if single else []
+
+    cache_path = Path(os.getenv("NOTION_PAGE_CACHE", "./data/cache/notion_page_ids.json"))
+    log_path = Path(os.getenv("NOTION_UPDATES_LOG", "./logs/dashboard_updates.ndjson"))
+
+    if not token:
+        raise RuntimeError("Missing NOTION_API_KEY")
+    if not database_ids or not database_ids[0]:
+        raise RuntimeError("Missing NOTION_DATABASE_ID (or set NOTION_DATABASE_IDS)")
+
+    _safe_mkdir(cache_path)
+    _safe_mkdir(log_path)
+
+    return NotionStoreConfig(token=token, database_ids=database_ids, cache_path=cache_path, log_path=log_path)
+
+# ----------------------------
+# Store
+# ----------------------------
+
+class NotionDashboardStore:
+    """
+    Canonical Notion dashboard updater.
+    Search-first upsert:
+      - Find row by Category + Metric
+      - Update if exists
+      - Create if missing
+    Includes:
+      - local cache (category|metric -> page_id)
+      - ndjson log of updates
+      - multi-database fallback (NOTION_DATABASE_IDS)
+    """
+
+    # Notion property names (must match your DB schema)
+    PROP_CATEGORY = "Category"        # title
+    PROP_METRIC = "Metric"           # rich_text
+    PROP_VALUE = "Value"             # rich_text
+    PROP_AI_TEXT = "AI Analysis"     # rich_text
+    PROP_AI_DATE = "Last AI Run"     # date
+
+    def __init__(self, cfg: NotionStoreConfig):
+        self.cfg = cfg
+        self.client = Client(auth=cfg.token)
+        self.database_ids = cfg.database_ids
+        self.cache_path = cfg.cache_path
+        self.log_path = cfg.log_path
+        self.cache = self._load_cache()
+
+    # -------- cache / log --------
+
+    def _cache_key(self, category: str, metric: str) -> str:
+        return f"{category.strip()}|{metric.strip()}"
+
+    def _load_cache(self) -> dict[str, str]:
+        if self.cache_path.exists():
+            try:
+                return json.loads(self.cache_path.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+        return {}
+
+    def _save_cache(self) -> None:
+        self.cache_path.write_text(json.dumps(self.cache, indent=2, sort_keys=True), encoding="utf-8")
+
+    def _append_log(self, payload: dict[str, Any]) -> None:
+        line = json.dumps(payload, ensure_ascii=False)
+        with self.log_path.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+    # -------- notion utils --------
+
+    def _rich_text(self, content: str) -> dict[str, Any]:
+        return {"rich_text": [{"type": "text", "text": {"content": content}}]}
+
+    def _title(self, content: str) -> dict[str, Any]:
+        return {"title": [{"type": "text", "text": {"content": content}}]}
+
+    def _date(self) -> dict[str, Any]:
+        return {"date": notion_date_payload()}
+
+    def _find_page_id(self, category: str, metric: str) -> Optional[str]:
+        """
+        Try cache first, then query each database until found.
+        """
+        key = self._cache_key(category, metric)
+        if key in self.cache:
+            return self.cache[key]
+
+        last_err: Optional[Exception] = None
+
+        for dbid in self.database_ids:
+            try:
+                resp = self.client.databases.query(
+                    database_id=dbid,
+                    filter={
+                        "and": [
+                            {"property": self.PROP_CATEGORY, "title": {"equals": category}},
+                            {"property": self.PROP_METRIC, "rich_text": {"equals": metric}},
+                        ]
+                    },
+                    page_size=1,
+                )
+                results = resp.get("results", [])
+                if not results:
+                    continue
+
+                page_id = results[0]["id"]
+                self.cache[key] = page_id
+                self._save_cache()
+                return page_id
+
+            except Exception as e:
+                last_err = e
+                # If the integration can't see this DB, try next DB
+                if _is_missing_db_error(e):
+                    continue
+                raise
+
+        # If every DB failed only because it was missing/not shared, treat as not found.
+        # If something else happened, we would have raised already.
+        _ = last_err
+        return None
+
+    def _update_page(self, page_id: str, value: str, ai_text: Optional[str]) -> None:
+        props: dict[str, Any] = {
+            self.PROP_VALUE: self._rich_text(value),
+            self.PROP_AI_DATE: self._date(),
+        }
+        if ai_text is not None:
+            props[self.PROP_AI_TEXT] = self._rich_text(ai_text)
+
+        self.client.pages.update(page_id=page_id, properties=props)
+
+    def _create_page(self, dbid: str, category: str, metric: str, value: str, ai_text: Optional[str]) -> str:
+        props: dict[str, Any] = {
+            self.PROP_CATEGORY: self._title(category),
+            self.PROP_METRIC: self._rich_text(metric),
+            self.PROP_VALUE: self._rich_text(value),
+            self.PROP_AI_DATE: self._date(),
+        }
+        if ai_text is not None:
+            props[self.PROP_AI_TEXT] = self._rich_text(ai_text)
+
+        page = self.client.pages.create(parent={"database_id": dbid}, properties=props)
+        return page["id"]
+
+    # -------- public API --------
+
+    def upsert_value(self, category: str, metric: str, value: str, ai_text: Optional[str] = None) -> None:
+        """
+        Upsert the Value + AI fields for a Category/Metric row.
+        """
+        category = category.strip()
+        metric = metric.strip()
+
+        page_id = self._find_page_id(category, metric)
+
+        if page_id:
+            self._update_page(page_id, value=value, ai_text=ai_text)
+            self._append_log(
+                {
+                    "ts": now_iso(),
+                    "action": "update",
+                    "category": category,
+                    "metric": metric,
+                    "page_id": page_id,
+                }
+            )
+            return
+
+        # Create: try databases in order until create succeeds
+        last_err: Optional[Exception] = None
+        for dbid in self.database_ids:
+            try:
+                new_page_id = self._create_page(dbid, category, metric, value=value, ai_text=ai_text)
+                key = self._cache_key(category, metric)
+                self.cache[key] = new_page_id
+                self._save_cache()
+
+                self._append_log(
+                    {
+                        "ts": now_iso(),
+                        "action": "create",
+                        "category": category,
+                        "metric": metric,
+                        "page_id": new_page_id,
+                        "database_id": dbid,
+                    }
+                )
+                return
+            except Exception as e:
+                last_err = e
+                if _is_missing_db_error(e):
+                    continue
+                raise
+
+        raise RuntimeError(f"All Notion databases failed on create. Last error: {last_err}")
