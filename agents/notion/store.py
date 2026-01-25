@@ -70,7 +70,6 @@ class NotionDashboardStore:
         self.client = Client(auth=cfg.notion_api_key)
 
     # ---------- low-level request (version tolerant) ----------
-
     def _request(self, method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """
         notion_client Client.request signature varies across versions.
@@ -93,8 +92,16 @@ class NotionDashboardStore:
         # Oldest / fallback
         return req(method, path, payload)
 
-    # ---------- database query (version tolerant) ----------
+    # ---------- compatibility layer (runner may call older method names) ----------
+    def upsert_value(self, category: str, metric: str, value: str, *args, **kwargs) -> None:
+        """Back-compat alias for older runners."""
+        return self.upsert_metric(category, metric, value)
 
+    def update_dashboard(self, category: str, metric: str, value: str, *args, **kwargs) -> None:
+        """Another back-compat alias."""
+        return self.upsert_metric(category, metric, value)
+
+    # ---------- database query (version tolerant) ----------
     def _db_query(
         self,
         database_id: str,
@@ -119,7 +126,6 @@ class NotionDashboardStore:
 
         # Raw REST fallback
         return self._request("POST", f"databases/{database_id}/query", payload)
-
     # ---------- public API ----------
 
     def upsert_metric(self, category: str, metric: str, value: str) -> None:
