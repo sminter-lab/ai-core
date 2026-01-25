@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Dict, List, Tuple
 
 import httpx
 
@@ -22,7 +22,7 @@ class StoreConfig:
     col_value: str = "Value"
 
 
-def _split_db_ids(*vals: str) -> list[str]:
+def _split_ids(*vals: str) -> list[str]:
     out: list[str] = []
     for v in vals:
         if not v:
@@ -31,7 +31,8 @@ def _split_db_ids(*vals: str) -> list[str]:
             part = part.strip()
             if part:
                 out.append(part)
-    # de-dupe while preserving order
+
+    # de-dupe, preserve order
     seen = set()
     uniq: list[str] = []
     for x in out:
@@ -48,14 +49,13 @@ def load_config() -> StoreConfig:
 
     db_single = os.getenv("NOTION_DATABASE_ID", "").strip()
     db_multi = os.getenv("NOTION_DATABASE_IDS", "").strip()
-    db_ids = _split_db_ids(db_single, db_multi)
+    db_ids = _split_ids(db_single, db_multi)
     if not db_ids:
         raise RuntimeError("Missing NOTION_DATABASE_ID (or NOTION_DATABASE_IDS)")
 
-    # allow overrides if you ever rename columns
-    col_category = os.getenv("NOTION_COL_CATEGORY", "Category").strip() or "Category"
-    col_metric = os.getenv("NOTION_COL_METRIC", "Metric").strip() or "Metric"
-    col_value = os.getenv("NOTION_COL_VALUE", "Value").strip() or "Value"
+    col_category = (os.getenv("NOTION_COL_CATEGORY", "Category") or "Category").strip()
+    col_metric = (os.getenv("NOTION_COL_METRIC", "Metric") or "Metric").strip()
+    col_value = (os.getenv("NOTION_COL_VALUE", "Value") or "Value").strip()
 
     return StoreConfig(
         notion_api_key=key,
@@ -72,7 +72,9 @@ def load_config() -> StoreConfig:
 
 class NotionDashboardStore:
     """
-    Direct Notion REST implementation (no notion_client dependency).
+    REST implementation that supports BOTH:
+      - classic Notion databases (/databases/{id}/query)
+      - new multi-source models via /data_sources/{id}/query
     """
 
     def __init__(self, cfg: StoreConfig):
@@ -80,10 +82,11 @@ class NotionDashboardStore:
         self.base_url = "https://api.notion.com/v1"
         self.headers = {
             "Authorization": f"Bearer {cfg.notion_api_key}",
-            "Notion-Version": "2022-06-28",
+            "Notion-Version": (os.getenv("NOTION_VERSION", "2022-06-28") or "2022-06-28").strip(),
             "Content-Type": "application/json",
         }
-        self._schema_cache: dict[str, dict[str, Any]] = {}
+        # id -> "data_source" | "database"
+        self._id_type_cache: Dict[str, str] = {}
 
     # ---- compatibility layer (runner may call older names) ----
     def upsert_value(self, category: str, metric: str, value: str, *args, **kwargs) -> None:
@@ -96,19 +99,19 @@ class NotionDashboardStore:
     def upsert_metric(self, category: str, metric: str, value: str) -> None:
         last_error: Optional[Exception] = None
 
-        for db_id in self.cfg.database_ids:
+        for target_id in self.cfg.database_ids:
             try:
-                page_id = self._find_page(db_id, category, metric)
+                page_id = self._find_page(target_id, category, metric)
                 if page_id:
                     self._update_page(page_id, value)
                 else:
-                    self._create_page(db_id, category, metric, value)
+                    self._create_page(target_id, category, metric, value)
                 return
             except Exception as e:
-                print(f"Error accessing DB {db_id}: {e}")
+                print(f"Error accessing target {target_id}: {e}")
                 last_error = e
 
-        raise RuntimeError(f"All Notion DBs failed. Last error: {last_error}")
+        raise RuntimeError(f"All Notion targets failed. Last error: {last_error}")
 
     # =========================
     # Internals
@@ -119,135 +122,199 @@ class NotionDashboardStore:
         with httpx.Client(headers=self.headers, timeout=30.0) as client:
             resp = client.request(method, url, json=payload)
             resp.raise_for_status()
-            if resp.content:
+            if resp.text:
                 return resp.json()
-            return {}
+        return {}
 
-    def _get_db_schema(self, database_id: str) -> dict[str, Any]:
-        if database_id in self._schema_cache:
-            return self._schema_cache[database_id]
-
-        data = self._request("GET", f"/databases/{database_id}")
-        props = data.get("properties", {}) or {}
-
-        # Find which property is the Title (Notion always has exactly one "title" type)
-        title_prop_name = None
-        for name, spec in props.items():
-            if (spec or {}).get("type") == "title":
-                title_prop_name = name
-                break
-
-        schema = {
-            "properties": props,
-            "title_prop": title_prop_name,
-        }
-        self._schema_cache[database_id] = schema
-        return schema
-
-    def _prop_type(self, schema: dict[str, Any], prop_name: str) -> Optional[str]:
-        props = schema.get("properties", {}) or {}
-        spec = props.get(prop_name)
-        if not spec:
-            return None
-        return spec.get("type")
-
-    def _make_equals_filter(self, schema: dict[str, Any], prop_name: str, value: str) -> dict[str, Any]:
+    def _detect_id_type(self, id_: str) -> str:
         """
-        Builds a Notion database filter for a property, based on its type.
-        Supports title / rich_text / select. Falls back to rich_text.
+        Determines whether id_ is a data_source_id or database_id.
+        Caches the result.
         """
-        ptype = self._prop_type(schema, prop_name) or "rich_text"
-        if ptype == "title":
-            return {"property": prop_name, "title": {"equals": value}}
-        if ptype == "select":
-            return {"property": prop_name, "select": {"equals": value}}
-        # default
-        return {"property": prop_name, "rich_text": {"equals": value}}
+        if id_ in self._id_type_cache:
+            return self._id_type_cache[id_]
 
-    def _find_page(self, database_id: str, category: str, metric: str) -> Optional[str]:
-        schema = self._get_db_schema(database_id)
-        title_prop = schema.get("title_prop")
+        # Prefer GET /data_sources/{id} (no side effects, fast)
+        try:
+            self._request("GET", f"/data_sources/{id_}")
+            self._id_type_cache[id_] = "data_source"
+            return "data_source"
+        except Exception:
+            pass
 
-        # We try two layouts:
-        #  A) Category is title, Metric is text
-        #  B) Metric is title, Category is text
-        # Because your DB(s) have changed and Notion title column may be renamed.
-        attempts: list[tuple[str, str]] = []
+        # Fallback: classic database
+        try:
+            self._request("GET", f"/databases/{id_}")
+            self._id_type_cache[id_] = "database"
+            return "database"
+        except Exception:
+            pass
 
-        # preferred: if Category is actually the title prop, use that
-        if title_prop == self.cfg.col_category:
-            attempts.append((self.cfg.col_category, self.cfg.col_metric))
-        elif title_prop == self.cfg.col_metric:
-            attempts.append((self.cfg.col_metric, self.cfg.col_category))
+        raise RuntimeError(f"ID is neither a data_source nor a database: {id_}")
 
-        # also try both ways explicitly
-        attempts.append((self.cfg.col_category, self.cfg.col_metric))
-        attempts.append((self.cfg.col_metric, self.cfg.col_category))
+    def _query_endpoint(self, target_id: str) -> str:
+        t = self._detect_id_type(target_id)
+        if t == "data_source":
+            return f"/data_sources/{target_id}/query"
+        return f"/databases/{target_id}/query"
+
+    def _parent_payload(self, target_id: str) -> dict[str, str]:
+        """
+        For page creation, parent must match the target type.
+        """
+        t = self._detect_id_type(target_id)
+        if t == "data_source":
+            return {"data_source_id": target_id}
+        return {"database_id": target_id}
+
+    # ---- query helpers ----
+
+    def _rich_text_equals(self, prop: str, value: str) -> dict[str, Any]:
+        return {"property": prop, "rich_text": {"equals": value}}
+
+    def _title_equals(self, prop: str, value: str) -> dict[str, Any]:
+        return {"property": prop, "title": {"equals": value}}
+
+    def _select_equals(self, prop: str, value: str) -> dict[str, Any]:
+        return {"property": prop, "select": {"equals": value}}
+
+    def _find_page(self, target_id: str, category: str, metric: str) -> Optional[str]:
+        """
+        Find an existing page for (category, metric).
+
+        We avoid schema calls entirely. Instead we try both layouts:
+          A) Category is title, Metric is rich_text/select
+          B) Metric is title, Category is rich_text/select
+
+        For non-title columns, we try rich_text first; if that errors, try select.
+        """
+        query_path = self._query_endpoint(target_id)
+
+        attempts: List[Tuple[str, str]] = [
+            (self.cfg.col_category, self.cfg.col_metric),
+            (self.cfg.col_metric, self.cfg.col_category),
+        ]
 
         # de-dupe attempts
         seen = set()
-        uniq_attempts: list[tuple[str, str]] = []
+        uniq: List[Tuple[str, str]] = []
         for a in attempts:
             if a not in seen:
-                uniq_attempts.append(a)
+                uniq.append(a)
                 seen.add(a)
 
-        for title_candidate, other_candidate in uniq_attempts:
-            # Build filters using detected property types
-            if title_candidate == self.cfg.col_category:
-                f1 = self._make_equals_filter(schema, self.cfg.col_category, category)
-                f2 = self._make_equals_filter(schema, self.cfg.col_metric, metric)
-            else:
-                f1 = self._make_equals_filter(schema, self.cfg.col_metric, metric)
-                f2 = self._make_equals_filter(schema, self.cfg.col_category, category)
+        for title_prop, other_prop in uniq:
+            title_value = category if title_prop == self.cfg.col_category else metric
+            other_value = metric if title_prop == self.cfg.col_category else category
 
+            # First try: other as rich_text
             payload = {
                 "page_size": 1,
-                "filter": {"and": [f1, f2]},
+                "filter": {
+                    "and": [
+                        self._title_equals(title_prop, title_value),
+                        self._rich_text_equals(other_prop, other_value),
+                    ]
+                },
             }
+            try:
+                resp = self._request("POST", query_path, payload)
+                results = resp.get("results", []) or []
+                if results:
+                    return results[0]["id"]
+            except Exception:
+                pass
 
-            resp = self._request("POST", f"/databases/{database_id}/query", payload)
-            results = resp.get("results", []) or []
-            if results:
-                return results[0]["id"]
+            # Second try: other as select
+            payload = {
+                "page_size": 1,
+                "filter": {
+                    "and": [
+                        self._title_equals(title_prop, title_value),
+                        self._select_equals(other_prop, other_value),
+                    ]
+                },
+            }
+            try:
+                resp = self._request("POST", query_path, payload)
+                results = resp.get("results", []) or []
+                if results:
+                    return results[0]["id"]
+            except Exception:
+                pass
 
         return None
 
-    def _set_prop_value(self, schema: dict[str, Any], prop_name: str, text: str) -> dict[str, Any]:
-        """
-        Builds a Notion 'properties' entry for create/update based on property type.
-        """
-        ptype = self._prop_type(schema, prop_name) or "rich_text"
-        if ptype == "title":
-            return {prop_name: {"title": [{"text": {"content": text}}]}}
-        if ptype == "select":
-            return {prop_name: {"select": {"name": text}}}
-        return {prop_name: {"rich_text": [{"text": {"content": text}}]}}
+    # ---- property builders ----
+
+    def _prop_title(self, prop: str, text: str) -> dict[str, Any]:
+        return {prop: {"title": [{"text": {"content": text}}]}}
+
+    def _prop_rich_text(self, prop: str, text: str) -> dict[str, Any]:
+        return {prop: {"rich_text": [{"text": {"content": text}}]}}
+
+    def _prop_select(self, prop: str, name: str) -> dict[str, Any]:
+        return {prop: {"select": {"name": name}}}
+
+    # ---- write operations ----
 
     def _update_page(self, page_id: str, value: str) -> None:
         safe_value = (value or "")[:2000]
-        # we don’t need schema for update except the Value prop type; fetch via first DB schema
-        # (Value prop types should be consistent; if not, this still works for rich_text/title/select)
-        schema = self._get_db_schema(self.cfg.database_ids[0])
-
-        props = {}
-        props.update(self._set_prop_value(schema, self.cfg.col_value, safe_value))
-
+        props: dict[str, Any] = {}
+        # Value in your DB is rich_text (from your successful query output)
+        props.update(self._prop_rich_text(self.cfg.col_value, safe_value))
         self._request("PATCH", f"/pages/{page_id}", {"properties": props})
 
-    def _create_page(self, database_id: str, category: str, metric: str, value: str) -> None:
-        schema = self._get_db_schema(database_id)
+    def _create_page(self, target_id: str, category: str, metric: str, value: str) -> None:
+        """
+        Create a new row. We don't know which of Category/Metric is the title prop,
+        so we attempt both layouts.
+        """
         safe_value = (value or "")[:2000]
+        parent = self._parent_payload(target_id)
 
-        props: dict[str, Any] = {}
+        # Layout A: Category is title, Metric is rich_text/select
+        props_a: dict[str, Any] = {}
+        props_a.update(self._prop_title(self.cfg.col_category, category))
 
-        # Category + Metric can be title/rich_text/select; we set both according to schema
-        props.update(self._set_prop_value(schema, self.cfg.col_category, category))
-        props.update(self._set_prop_value(schema, self.cfg.col_metric, metric))
-        props.update(self._set_prop_value(schema, self.cfg.col_value, safe_value))
+        # Metric could be rich_text OR select — try rich_text first at call-site
+        props_a.update(self._prop_rich_text(self.cfg.col_metric, metric))
+        props_a.update(self._prop_rich_text(self.cfg.col_value, safe_value))
 
-        payload = {
-            "parent": {"database_id": database_id},
-            "properties": props,
-        }
-        self._request("POST", "/pages", payload)
+        payload_a = {"parent": parent, "properties": props_a}
+
+        try:
+            self._request("POST", "/pages", payload_a)
+            return
+        except Exception:
+            # Try Metric as select if rich_text failed
+            props_a2: dict[str, Any] = {}
+            props_a2.update(self._prop_title(self.cfg.col_category, category))
+            props_a2.update(self._prop_select(self.cfg.col_metric, metric))
+            props_a2.update(self._prop_rich_text(self.cfg.col_value, safe_value))
+            payload_a2 = {"parent": parent, "properties": props_a2}
+            try:
+                self._request("POST", "/pages", payload_a2)
+                return
+            except Exception:
+                pass
+
+        # Layout B: Metric is title, Category is rich_text/select
+        props_b: dict[str, Any] = {}
+        props_b.update(self._prop_title(self.cfg.col_metric, metric))
+        props_b.update(self._prop_rich_text(self.cfg.col_category, category))
+        props_b.update(self._prop_rich_text(self.cfg.col_value, safe_value))
+        payload_b = {"parent": parent, "properties": props_b}
+
+        try:
+            self._request("POST", "/pages", payload_b)
+            return
+        except Exception:
+            # Try Category as select if rich_text failed
+            props_b2: dict[str, Any] = {}
+            props_b2.update(self._prop_title(self.cfg.col_metric, metric))
+            props_b2.update(self._prop_select(self.cfg.col_category, category))
+            props_b2.update(self._prop_rich_text(self.cfg.col_value, safe_value))
+            payload_b2 = {"parent": parent, "properties": props_b2}
+            self._request("POST", "/pages", payload_b2)
+            return
