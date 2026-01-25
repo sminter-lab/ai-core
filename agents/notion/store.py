@@ -38,12 +38,8 @@ def load_config() -> StoreConfig:
 class NotionDashboardStore:
     def __init__(self, cfg: StoreConfig):
         self.cfg = cfg
+        # Initialize client once
         self.client = Client(auth=cfg.notion_api_key)
-        self.headers = {
-            "Authorization": f"Bearer {cfg.notion_api_key}",
-            "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json",
-        }
 
     # ---- compatibility layer ----
     def upsert_value(self, category: str, metric: str, value: str, *_, **__) -> None:
@@ -63,8 +59,11 @@ class NotionDashboardStore:
                     self._update_page(page_id, value)
                 else:
                     self._create_page(db_id, category, metric, value)
+                # If successful, return immediately
                 return
             except Exception as e:
+                # Log error but try next DB if available
+                print(f"Error accessing DB {db_id}: {e}")
                 last_error = e
 
         raise RuntimeError(f"All Notion DBs failed. Last error: {last_error}")
@@ -74,43 +73,56 @@ class NotionDashboardStore:
     # =========================
 
     def _find_page(self, database_id: str, category: str, metric: str) -> Optional[str]:
-        url = f"https://api.notion.com/v1/databases/{database_id}/query"
-
-        payload = {
-            "page_size": 1,
-            "filter": {
+        # NOTE: This assumes "Metric" is the database Title/Name property.
+        # If "Category" is a 'Select' column in Notion, change 'rich_text' to 'select' below.
+        
+        response = self.client.databases.query(
+            database_id=database_id,
+            page_size=1,
+            filter={
                 "and": [
-                    {"property": "Category", "rich_text": {"equals": category}},
-                    {"property": "Metric", "rich_text": {"equals": metric}},
+                    {
+                        "property": "Category", 
+                        "rich_text": {"equals": category}
+                    },
+                    {
+                        # CRITICAL FIX: The primary column must be queried as 'title', not 'rich_text'
+                        "property": "Metric", 
+                        "title": {"equals": metric}
+                    },
                 ]
-            },
-        }
+            }
+        )
 
-        r = requests.post(url, headers=self.headers, json=payload, timeout=20)
-        r.raise_for_status()
-
-        data = r.json()
-        results = data.get("results", [])
+        results = response.get("results", [])
         if not results:
             return None
         return results[0]["id"]
 
     def _update_page(self, page_id: str, value: str) -> None:
+        # NOTE: Notion API limits text blocks to 2000 chars. Truncating to be safe.
+        safe_value = value[:2000] 
+        
         self.client.pages.update(
             page_id=page_id,
             properties={
                 "Value": {
-                    "rich_text": [{"text": {"content": value}}]
+                    "rich_text": [{"text": {"content": safe_value}}]
                 }
             },
         )
 
     def _create_page(self, database_id: str, category: str, metric: str, value: str) -> None:
+        safe_value = value[:2000]
+        
         self.client.pages.create(
             parent={"database_id": database_id},
             properties={
                 "Category": {"rich_text": [{"text": {"content": category}}]},
-                "Metric": {"rich_text": [{"text": {"content": metric}}]},
-                "Value": {"rich_text": [{"text": {"content": value}}]},
+                "Metric": {
+                    # CRITICAL FIX: Creating the Title property
+                    "title": [{"text": {"content": metric}}]
+                },
+                "Value": {"rich_text": [{"text": {"content": safe_value}}]},
             },
         )
