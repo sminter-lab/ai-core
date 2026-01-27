@@ -83,3 +83,13 @@ llama.cpp/
 secrets/
 *.key
 *.pem
+
+# ai-core memory outputs (keep folders via .gitkeep, ignore generated files)
+memory/daily/*.json
+memory/decisions/*.json
+memory/facts/*.json
+memory/runs/*.json
+
+# bot inbox (generated content)
+data/bot_inbox/*
+!data/bot_inbox/.gitkeep
