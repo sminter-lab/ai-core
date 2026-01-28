@@ -15,9 +15,9 @@ docker build -t "$IMAGE" "$(dirname "$0")"
 
 docker run --rm \
   -e AI_VAULT_ROOT="$AI_VAULT_ROOT" \
-  -e JOB_SPEC_PATH="/work/spec.json" \
+  -e JOB_SPEC_PATH="/work/$(basename "$JOB_SPEC_PATH")" \
   -v "$AI_VAULT_ROOT":"$AI_VAULT_ROOT" \
-  -v "$(cd "$(dirname "$JOB_SPEC_PATH")" && pwd)/$(basename "$JOB_SPEC_PATH")":/work/spec.json:ro \
+  -v "$(cd "$(dirname "$JOB_SPEC_PATH")" && pwd)":/work:ro \
   --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=256m \
   --cpus="1.0" \
