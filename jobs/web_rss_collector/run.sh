@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+IMAGE="ai-core/web-rss-collector:latest"
+
 AI_VAULT_ROOT="${AI_VAULT_ROOT:-/srv/ai-vault}"
 JOB_SPEC_REL="${1:-}"
 
@@ -9,12 +11,21 @@ if [[ -z "$JOB_SPEC_REL" ]]; then
   exit 1
 fi
 
-# Must be run from repo root so relative paths resolve
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SPEC_HOST_PATH="$REPO_ROOT/$JOB_SPEC_REL"
 
-IMAGE="ai-core/web-rss-collector:latest"
+if [[ -d "$SPEC_HOST_PATH" ]]; then
+  echo "ERROR: Spec path is a directory, expected a file: $JOB_SPEC_REL"
+  exit 2
+fi
+if [[ ! -f "$SPEC_HOST_PATH" ]]; then
+  echo "ERROR: Spec file not found: $JOB_SPEC_REL"
+  exit 3
+fi
 
-docker build -t "$IMAGE" "$REPO_ROOT/jobs/web_rss_collector"
+# Build only if image doesn't exist (faster, avoids rebuild spam)
+docker image inspect "$IMAGE" >/dev/null 2>&1 || \
+  docker build -t "$IMAGE" "$REPO_ROOT/jobs/web_rss_collector"
 
 docker run --rm \
   -e AI_VAULT_ROOT="$AI_VAULT_ROOT" \
