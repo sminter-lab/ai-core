@@ -26,6 +26,7 @@ ai_output.txt
 pip-wheel-metadata/
 .pytest_cache/
 .mypy_cache/
+*.token.json
 
 # ===============================
 # Logs & Runtime
