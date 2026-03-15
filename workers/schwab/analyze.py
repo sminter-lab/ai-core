@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from workers.schwab.llm import ollama_generate, build_prompt
+from tools.shared_store import raw_root, docs_root
 
 
 def utc_now_iso() -> str:
@@ -45,10 +46,14 @@ def fmt_num(v: Optional[float]) -> str:
 def main() -> None:
     load_dotenv()
 
+    # ── Input: local SQLite (collector's buffer) ──────────────────────────────
     db_path = Path(os.environ.get("SCHWAB_DB_PATH", "data/schwab/schwab.sqlite3")).expanduser().resolve()
-    out_md = Path(os.environ.get("SCHWAB_ANALYSIS_PATH", "data/schwab/analysis.md")).expanduser().resolve()
-    out_json = Path(os.environ.get("SCHWAB_ANALYSIS_JSON_PATH", "data/schwab/analysis.json")).expanduser().resolve()
-    llm_out = Path(os.environ.get("SCHWAB_LLM_OUTPUT_PATH", "data/schwab/llm_brief.md")).expanduser().resolve()
+
+    # ── Output: NAS Documents share (studio writes here) ─────────────────────
+    _docs = docs_root() / "schwab"
+    out_md   = Path(os.environ.get("SCHWAB_ANALYSIS_PATH",      str(_docs / "analysis.md"))).expanduser().resolve()
+    out_json = Path(os.environ.get("SCHWAB_ANALYSIS_JSON_PATH", str(_docs / "analysis.json"))).expanduser().resolve()
+    llm_out  = Path(os.environ.get("SCHWAB_LLM_OUTPUT_PATH",    str(_docs / "llm_brief.md"))).expanduser().resolve()
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row

@@ -9,6 +9,8 @@ from datetime import datetime, date
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from tools.shared_store import raw_root, docs_root
+
 
 def _tz() -> ZoneInfo:
     # Prefer explicit TZ; fallback to system/local.
@@ -207,7 +209,8 @@ def render_markdown(ds: DailyStatus) -> str:
 
 
 def write_outputs(ai_vault_root: Path, ds: DailyStatus) -> tuple[Path, Path]:
-    out_dir = ai_vault_root / "memory" / "daily"
+    # studio writes processed daily summaries to the NAS Documents share
+    out_dir = docs_root() / "daily"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     md_path = out_dir / f"{ds.day}.md"
@@ -221,7 +224,12 @@ def write_outputs(ai_vault_root: Path, ds: DailyStatus) -> tuple[Path, Path]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate a daily status digest from ai-vault/state artifacts.")
     ap.add_argument("--date", default="today", help="YYYY-MM-DD or 'today'")
-    ap.add_argument("--vault-root", default=os.environ.get("AI_VAULT_ROOT", "/srv/ai-vault"))
+    # mintworker writes raw data to NAS_RAW_ROOT; fall back to AI_VAULT_ROOT for
+    # backwards compatibility, then the shared_store default.
+    ap.add_argument(
+        "--vault-root",
+        default=os.environ.get("AI_VAULT_ROOT", str(raw_root())),
+    )
     ap.add_argument("--format", default="text", choices=["text", "json"], help="Output format to stdout")
     ap.add_argument("--no-write", action="store_true", help="Do not write to ai-vault, only print")
     args = ap.parse_args()

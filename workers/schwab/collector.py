@@ -9,6 +9,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from workers.schwab.client import get_client
+from tools.shared_store import raw_root
 
 
 # ===============================
@@ -242,7 +243,59 @@ def main() -> None:
         conn.execute("UPDATE runs SET status=? WHERE id=?", ("OK", run_id))
         conn.commit()
 
+        # ── NAS handoff: write a JSON snapshot for studio to consume ──────────
+        snapshot: dict = {
+            "collected_at": ts,
+            "run_id": run_id,
+            "account_hash": account_hash,
+            "balances": {},
+            "positions": [],
+            "quotes": {},
+        }
+
+        # Re-read what we just committed so the snapshot mirrors the DB exactly
+        for kind in ("initialBalances", "currentBalances", "projectedBalances"):
+            if kind in sec:
+                snapshot["balances"][kind] = sec[kind]
+
+        for p in sec.get("positions", []) or []:
+            instr = p.get("instrument", {}) or {}
+            snapshot["positions"].append({
+                "symbol": instr.get("symbol"),
+                "asset_type": instr.get("assetType"),
+                "long_short": p.get("longShort"),
+                "quantity": (
+                    p.get("longQuantity")
+                    if p.get("longQuantity") is not None
+                    else p.get("shortQuantity")
+                ),
+                "average_price": p.get("averagePrice"),
+                "market_value": p.get("marketValue"),
+            })
+
+        if symbols:
+            rq2 = c.get_quotes(list(symbols))
+            if rq2.ok:
+                for sym, item in rq2.json().items():
+                    q = item.get("quote", {}) or {}
+                    snapshot["quotes"][sym] = {
+                        "last": q.get("lastPrice"),
+                        "bid": q.get("bidPrice"),
+                        "ask": q.get("askPrice"),
+                        "mark": q.get("mark"),
+                        "volume": q.get("totalVolume"),
+                    }
+
+        snap_dir = raw_root() / "schwab"
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        date_str = ts[:10]  # YYYY-MM-DD
+        snap_path = snap_dir / f"snapshot_{date_str}.json"
+        snap_path.write_text(jdump(snapshot), encoding="utf-8")
+        # Keep a stable "latest" pointer for studio
+        (snap_dir / "snapshot_latest.json").write_text(jdump(snapshot), encoding="utf-8")
+
         print(f"✅ Schwab collector OK | run_id={run_id} | symbols={symbols}")
+        print(f"📤 Snapshot → {snap_path}")
 
     except Exception as e:
         conn.execute(
