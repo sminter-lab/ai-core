@@ -1,0 +1,19 @@
+[Unit]
+Description=ai-core market brief worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sam
+WorkingDirectory=/home/sam/ai-core
+EnvironmentFile=/home/sam/ai-core/.env
+Environment=AI_CORE_REPO=/home/sam/ai-core
+Environment=NAS_RAW_ROOT=/Volumes/RawSourceLibrary
+ExecStart=/home/sam/ai-core/.venv/bin/python -m workers.market_brief.run
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-market-brief
+
+[Install]
+WantedBy=multi-user.target

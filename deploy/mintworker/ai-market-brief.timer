@@ -1,0 +1,10 @@
+[Unit]
+Description=Run ai-core market brief daily at 07:00 ET
+
+[Timer]
+OnCalendar=*-*-* 12:00:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
