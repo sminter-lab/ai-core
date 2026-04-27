@@ -17,12 +17,25 @@ import subprocess
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-_ENV      = os.environ.get("AI_CORE_ENV", "live").strip().lower()
-_BASE     = Path.home() / "MountPoints" / "RawSourceLibrary" / "market"
-_OUT_DIR  = _BASE / ("test" if _ENV == "test" else "")
-BRIEF_FILE  = _OUT_DIR / "brief.txt"
-STATUS_FILE = _OUT_DIR / "status.json"
+_ENV        = os.environ.get("AI_CORE_ENV", "live").strip().lower()
 STALE_HOURS = 36
+
+
+def _find_raw_mount():
+    """Locate RawSourceLibrary under ~/MountPoints regardless of ConnectMeNow suffix."""
+    mount_root = Path.home() / "MountPoints"
+    if not mount_root.exists():
+        return None
+    for entry in mount_root.iterdir():
+        if entry.name.startswith("RawSourceLibrary"):
+            return entry
+    return None
+
+
+_RAW = _find_raw_mount()
+_OUT_DIR    = (_RAW / "market" / ("test" if _ENV == "test" else "")) if _RAW else None
+BRIEF_FILE  = _OUT_DIR / "brief.txt"  if _OUT_DIR else None
+STATUS_FILE = _OUT_DIR / "status.json" if _OUT_DIR else None
 
 
 def notify(title: str, body: str) -> None:
@@ -36,9 +49,13 @@ def main() -> None:
     print(f"[digest] env={_ENV}  reading from {_OUT_DIR}")
 
     # ── NAS reachability ──────────────────────────────────────────────────────
+    if _RAW is None:
+        notify("ai-core ⚠", "RawSourceLibrary not found in ~/MountPoints — mount NAS first")
+        print("ERROR: no RawSourceLibrary mount found under ~/MountPoints")
+        return
     if not _OUT_DIR.exists():
-        notify("ai-core ⚠", f"NAS path not found: {_OUT_DIR}")
-        print(f"ERROR: {_OUT_DIR} does not exist — is RawSourceLibrary mounted?")
+        notify("ai-core ⚠", f"market/ dir missing on NAS — mintworker hasn't run yet")
+        print(f"ERROR: {_OUT_DIR} does not exist — run mintworker once to create it")
         return
 
     # ── Status file ───────────────────────────────────────────────────────────
