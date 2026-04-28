@@ -1,10 +1,9 @@
 # ── MACRO & MARKET REGIME ───────────────────────────────────────────────────
 # Core regime signals: risk-on/off, broad market, SPY/QQQ moves
-https://feeds.a.dj.com/rss/RSSMarketsMain.xml
 https://feeds.content.dowjones.io/public/rss/mw_topstories
-https://feeds.reuters.com/reuters/businessNews
-https://feeds.reuters.com/reuters/financialNews
 https://www.cnbc.com/id/20910258/device/rss/rss.html
+https://feeds.apnews.com/rss/apf-business
+https://feeds.apnews.com/rss/apf-finance
 
 # ── FEDERAL RESERVE / RATES ─────────────────────────────────────────────────
 # Critical for regime detection — rate decisions drive VIX and premium
@@ -15,14 +14,17 @@ https://www.federalreserve.gov/feeds/speeches.xml
 # Earnings catalysts, export controls, AI capex — moves your entire book
 https://www.cnbc.com/id/19854910/device/rss/rss.html
 https://feeds.arstechnica.com/arstechnica/technology-lab
+https://feeds.feedburner.com/TheKeywordByGoogleAds
 
 # ── GEOPOLITICAL / TARIFFS / TRADE ──────────────────────────────────────────
-# Tariff/export-control headlines are direct NVDA & AMD catalysts
-https://feeds.reuters.com/reuters/worldNews
+# Tariff/export-control headlines — direct NVDA & AMD catalysts
+https://feeds.apnews.com/rss/apf-worldnews
+https://feeds.apnews.com/rss/apf-politics
 
 # ── OPTIONS & VOLATILITY ─────────────────────────────────────────────────────
-# VIX commentary, unusual options flow, vol surface signals
-https://www.cboe.com/feed/news/rss.xml
+# VIX commentary, vol surface signals — replaced dead CBOE feed
+https://www.benzinga.com/feed
+https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines
 
 # ── CRYPTO  (BTC risk-on/risk-off signal) ────────────────────────────────────
 # BTC leading risk appetite — confirms or contradicts equity regime read
@@ -31,3 +33,4 @@ https://cointelegraph.com/rss
 
 # ── BROAD FINANCIAL / EARNINGS ───────────────────────────────────────────────
 https://finance.yahoo.com/news/rssindex
+https://feeds.content.dowjones.io/public/rss/mw_marketpulse
