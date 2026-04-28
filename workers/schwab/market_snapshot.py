@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 from workers.schwab.client import get_client
 
 # ── Watch list ────────────────────────────────────────────────────────────────
-WATCH_SYMBOLS = ["SPY", "QQQ", "NVDA", "AMD", "AAPL", "$VIX.X"]
+WATCH_SYMBOLS = ["SPY", "QQQ", "NVDA", "AMD", "AAPL"]
+VIX_SYMBOLS   = ["VIX", "$VIX.X", "VIXY"]          # try in order, first that works
 BTC_SYMBOLS   = ["/BTCUSD", "BTCUSD", "$BTCUSD"]   # try in order, first that works
 
 # ── Regime thresholds ─────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ def _parse_quote(item: dict) -> dict:
 
 def _compute_regime(quotes: dict) -> str:
     spy_pct = (quotes.get("SPY") or {}).get("change_pct")
-    vix_lvl = (quotes.get("$VIX.X") or {}).get("last")
+    vix_lvl = (quotes.get("VIX") or {}).get("last")   # stored as "VIX" regardless of source symbol
 
     if spy_pct is None and vix_lvl is None:
         return "Unknown"
@@ -99,20 +100,44 @@ def main() -> None:
     try:
         r = c.get_quotes(WATCH_SYMBOLS)
         r.raise_for_status()
-        for sym, item in r.json().items():
+        data = r.json()
+        for sym, item in data.items():
+            # Skip Schwab error/metadata keys (not actual quote dicts)
+            if not isinstance(item, dict) or "quote" not in item and "fundamental" not in item:
+                continue
             quotes[sym] = _parse_quote(item)
     except Exception as exc:
         print(f"[market_snapshot] WARN: quote fetch failed: {exc}")
 
-    # ── 2. Try BTC ────────────────────────────────────────────────────────────
+    # ── 2. Try VIX ────────────────────────────────────────────────────────────
+    for vix_sym in VIX_SYMBOLS:
+        try:
+            r = c.get_quotes([vix_sym])
+            if r.status_code == 200:
+                data = r.json()
+                for sym, item in data.items():
+                    if isinstance(item, dict) and ("quote" in item or "fundamental" in item):
+                        quotes["VIX"] = _parse_quote(item)
+                        print(f"[market_snapshot] VIX via {vix_sym}")
+                        break
+                if "VIX" in quotes:
+                    break
+        except Exception:
+            continue
+
+    # ── 3. Try BTC ────────────────────────────────────────────────────────────
     for btc_sym in BTC_SYMBOLS:
         try:
             r = c.get_quotes([btc_sym])
-            if r.ok and r.json():
-                item = list(r.json().values())[0]
-                quotes["BTC"] = _parse_quote(item)
-                print(f"[market_snapshot] BTC via {btc_sym}")
-                break
+            if r.status_code == 200:
+                data = r.json()
+                for sym, item in data.items():
+                    if isinstance(item, dict) and ("quote" in item or "fundamental" in item):
+                        quotes["BTC"] = _parse_quote(item)
+                        print(f"[market_snapshot] BTC via {btc_sym}")
+                        break
+                if "BTC" in quotes:
+                    break
         except Exception:
             continue
 
@@ -122,10 +147,10 @@ def main() -> None:
         from schwab.client import Client as SchwabClient
         r = c.get_movers(
             SchwabClient.Movers.Index.COMPX,
-            sort_order=SchwabClient.Movers.SortOrder.VOLUME,
+            sort_order=SchwabClient.Movers.SortOrder.PERCENT_CHANGE_UP,
             frequency=SchwabClient.Movers.Frequency.ZERO,
         )
-        if r.ok:
+        if r.status_code == 200:
             data = r.json()
             screeners = data if isinstance(data, list) else data.get("screeners", [])
             for m in screeners[:10]:
@@ -158,7 +183,7 @@ def main() -> None:
     print(f"[market_snapshot] OK → {out_path}")
     print(f"[market_snapshot] regime={regime}  "
           f"SPY={quotes.get('SPY', {}).get('change_pct')}%  "
-          f"VIX={quotes.get('$VIX.X', {}).get('last')}")
+          f"VIX={quotes.get('VIX', {}).get('last')}")
 
 
 if __name__ == "__main__":

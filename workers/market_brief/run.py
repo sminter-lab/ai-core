@@ -129,7 +129,7 @@ def build_book_check(quotes: dict) -> str:
         ("AMD",    "AMD"),
         ("SPY",    "SPY"),
         ("QQQ",    "QQQ"),
-        ("$VIX.X", "VIX"),
+        ("VIX",    "VIX"),
         ("BTC",    "BTC"),
     ]
     for sym, label in book:
