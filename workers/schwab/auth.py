@@ -5,7 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # schwab-py
-from schwab.auth import easy_client
+from schwab.auth import client_from_manual_flow
 from rich import print
 
 def main() -> None:
@@ -24,15 +24,19 @@ def main() -> None:
 
     token_file = Path(token_path).expanduser().resolve()
 
-    print("[bold cyan]Starting Schwab OAuth…[/bold cyan]")
+    print("[bold cyan]Starting Schwab OAuth (manual flow)…[/bold cyan]")
     print(f"Token file: [yellow]{token_file}[/yellow]")
     print(f"Redirect URI: [yellow]{redirect_uri}[/yellow]")
+    print()
+    print("1. Open the URL printed below in your browser")
+    print("2. Log in and approve the app")
+    print("3. After approving, your browser will redirect to a URL starting with https://127.0.0.1:8182")
+    print("   (it will show an error page — that's fine)")
+    print("4. Copy that full URL from the address bar and paste it here")
+    print()
 
-    # This will:
-    # - open a browser to Schwab login/consent
-    # - receive the callback on your local loopback
-    # - write/refresh tokens into token_file
-    client = easy_client(
+    # Manual flow — no local server needed, avoids port 8182 conflicts
+    client = client_from_manual_flow(
         api_key=client_id,
         app_secret=client_secret,
         callback_url=redirect_uri,
