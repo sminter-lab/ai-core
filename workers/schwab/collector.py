@@ -275,7 +275,9 @@ def main() -> None:
 
         if symbols:
             rq2 = c.get_quotes(list(symbols))
-            if rq2.ok:
+            # httpx.Response has no `.ok` (that's requests) — this crashed every
+            # run since 2026-04-28. Use a status-code check that works everywhere.
+            if 200 <= rq2.status_code < 300:
                 for sym, item in rq2.json().items():
                     q = item.get("quote", {}) or {}
                     snapshot["quotes"][sym] = {
