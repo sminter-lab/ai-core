@@ -14,15 +14,23 @@ This repository is intentionally backend-only:
 
 ## 🔭 Scope (re-scoped 2026-07)
 
-**Local hardware captures, verifies, and sorts data. Analysis happens offsite.**
+**MintWorker collects. Mac Studio analyzes. Claude handles outlook.**
 
-- **Local (Mac + mintworker):** Schwab collectors, options collector, RSS/market
-  capture, data health checks (`workers/schwab/verify.py`), sqlite + NAS storage
+Role separation is a hard boundary (see `docs/framework_architecture.md`):
+
+- **MintWorker — COLLECTOR:** all external data fetching (RapidAPI, scrapes,
+  Schwab collectors, RSS/market capture). Lowest safe cadence, M–F only,
+  API budgets, enable-flag kill switches, failure auto-disable. Writes raw
+  JSON to shared NAS storage. Never analyzes, never alerts.
+- **Mac Studio — ANALYST:** reads raw data, runs Ollama scoring + financial
+  modeling, applies decision criteria, selects top leads, writes decisions
+  and morning digests. Never collects.
 - **Offsite (Claude):** daily outlook, market analysis, trade review — reads
   `data/health.json`, `data/schwab/schwab.sqlite3`, and NAS captures; writes
   `data/outlook/`
-- Retired local analysis code lives in `archive/analysis/` (Ollama briefs,
-  local LLM synthesis)
+- First framework implementation: **real estate deal pipeline**
+  (`jobs/collect_realestate.py` → `jobs/analyze_realestate.py`, 3 leads/day M–F)
+- Retired code lives in `archive/analysis/`
 
 ---
 
@@ -60,6 +68,10 @@ ai-core is system infrastructure, not an end product.
 
 ```text
 ai-core/
+├── jobs/          # collect_* (MintWorker) / analyze_* (Studio) + templates
+├── config/        # Per-project pipeline config (JSON)
+├── criteria/      # Human-readable decision criteria docs
+├── control/       # Enable flags & locks (contents gitignored)
 ├── docs/          # Architecture, decisions, setup notes
 ├── infra/         # Docker, systemd, Terraform, Ansible
 ├── agents/        # LLM-driven decision-makers

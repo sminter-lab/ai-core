@@ -35,6 +35,13 @@ logs/
 *.log
 
 # ===============================
+# Framework control flags & agent worktrees
+# ===============================
+control/*
+!control/.gitkeep
+workers/.claude/
+
+# ===============================
 # Data (NEVER COMMIT)
 # ===============================
 data/

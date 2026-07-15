@@ -1,0 +1,60 @@
+{
+  "_comment": "Single config for jobs/collect_realestate.py (MintWorker) and jobs/analyze_realestate.py (Studio)",
+
+  "project": "realestate",
+
+  "collector": {
+    "max_api_calls": 50,
+    "max_items_per_feed": 10,
+    "timeout_sec": 20,
+    "failure_backoff_threshold": 3,
+    "zillow": {
+      "host": "zillow-com1.p.rapidapi.com",
+      "locations": [
+        "Atlanta, GA",
+        "Birmingham, AL",
+        "Huntsville, AL",
+        "Nashville, TN",
+        "Charlotte, NC",
+        "Tampa, FL",
+        "Jacksonville, FL",
+        "Savannah, GA",
+        "Chattanooga, TN"
+      ],
+      "params": {
+        "home_type": "Houses,Multi-family",
+        "minBeds": 2,
+        "maxBeds": 4,
+        "minPrice": 80000,
+        "maxPrice": 600000,
+        "sort": "Newest"
+      }
+    },
+    "craigslist_residential": [
+      {"name": "atlanta",      "state": "GA", "url": "https://atlanta.craigslist.org/search/reo?format=rss&min_price=100000&max_price=500000"},
+      {"name": "birmingham",   "state": "AL", "url": "https://bham.craigslist.org/search/reo?format=rss&min_price=80000&max_price=450000"},
+      {"name": "huntsville",   "state": "AL", "url": "https://huntsville.craigslist.org/search/reo?format=rss&min_price=100000&max_price=450000"},
+      {"name": "nashville",    "state": "TN", "url": "https://nashville.craigslist.org/search/reo?format=rss&min_price=150000&max_price=600000"},
+      {"name": "charlotte",    "state": "NC", "url": "https://charlotte.craigslist.org/search/reo?format=rss&min_price=100000&max_price=500000"},
+      {"name": "jacksonville", "state": "FL", "url": "https://jacksonville.craigslist.org/search/reo?format=rss&min_price=100000&max_price=500000"},
+      {"name": "savannah",     "state": "GA", "url": "https://savannah.craigslist.org/search/reo?format=rss&min_price=80000&max_price=400000"}
+    ],
+    "craigslist_commercial": [
+      {"name": "atlanta",    "state": "GA", "url": "https://atlanta.craigslist.org/search/cre?format=rss"},
+      {"name": "atlanta",    "state": "GA", "url": "https://atlanta.craigslist.org/search/lnd?format=rss&min_price=200000"},
+      {"name": "macon",      "state": "GA", "url": "https://macon.craigslist.org/search/cre?format=rss"},
+      {"name": "savannah",   "state": "GA", "url": "https://savannah.craigslist.org/search/cre?format=rss"},
+      {"name": "columbus",   "state": "GA", "url": "https://columbusga.craigslist.org/search/cre?format=rss"},
+      {"name": "birmingham", "state": "AL", "url": "https://bham.craigslist.org/search/cre?format=rss"},
+      {"name": "nashville",  "state": "TN", "url": "https://nashville.craigslist.org/search/cre?format=rss"}
+    ]
+  },
+
+  "analyzer": {
+    "leads_per_day": 3,
+    "min_surface_score": 7,
+    "ollama_url": "http://127.0.0.1:11434",
+    "ollama_model": "llama3.1:8b",
+    "timeout_sec": 120
+  }
+}
