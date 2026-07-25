@@ -33,6 +33,7 @@ import feedparser
 import requests
 
 from tools.shared_store import raw_root
+from reporting.reporter import report_job
 
 # ── Config ────────────────────────────────────────────────────────────────────
 _REPO        = Path(__file__).resolve().parents[2]
@@ -130,6 +131,7 @@ def sort_book_quotes(quotes: dict) -> dict:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+@report_job("market_brief", job_type="Finance")
 def main() -> None:
     ts = datetime.now(timezone.utc).isoformat()
     print(f"[market_capture] env={_ENV}  out={_OUT_DIR}")

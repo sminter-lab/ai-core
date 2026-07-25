@@ -32,6 +32,7 @@ from pathlib import Path
 import requests
 
 from tools.shared_store import raw_root
+from reporting.reporter import report_job
 from jobs.re_criteria import (
     commercial_metrics,
     commercial_passes,
@@ -231,6 +232,7 @@ def _fmt_lead(d: dict) -> str:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+@report_job("analyze_realestate", job_type="Business")
 def main() -> None:
     parser = argparse.ArgumentParser(description="Real estate analyzer (Mac Studio)")
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"),

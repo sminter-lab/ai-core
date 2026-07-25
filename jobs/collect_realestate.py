@@ -40,6 +40,7 @@ except ImportError:
     pass
 
 from tools.shared_store import raw_root
+from reporting.reporter import report_job
 
 _BASE        = Path(__file__).resolve().parents[1]
 _CONFIG      = json.loads((_BASE / "config" / "realestate.json").read_text(encoding="utf-8"))
@@ -272,6 +273,7 @@ def fetch_craigslist(markets: list[dict], kind: str) -> list[dict]:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+@report_job("collect_realestate", job_type="Business")
 def main() -> None:
     parser = argparse.ArgumentParser(description="Real estate collector (MintWorker)")
     parser.add_argument("--force", action="store_true", help="skip weekday guard")

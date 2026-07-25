@@ -10,6 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from tools.shared_store import raw_root, docs_root
+from reporting.reporter import report_job
 
 
 def _tz() -> ZoneInfo:
@@ -221,6 +222,7 @@ def write_outputs(ai_vault_root: Path, ds: DailyStatus) -> tuple[Path, Path]:
     return md_path, json_path
 
 
+@report_job("daily_status", job_type="AI Systems")
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate a daily status digest from ai-vault/state artifacts.")
     ap.add_argument("--date", default="today", help="YYYY-MM-DD or 'today'")

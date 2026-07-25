@@ -12,8 +12,10 @@ from __future__ import annotations
 import os
 
 from tools.shared_store import raw_root
+from reporting.reporter import report_job
 
 
+@report_job("rss_fetch", job_type="Content")
 def main() -> None:
     # Point the RSS collector at the shared NAS raw store.
     # NAS_RAW_ROOT takes precedence; AI_VAULT_ROOT is honoured for

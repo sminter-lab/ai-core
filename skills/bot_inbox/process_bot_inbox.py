@@ -20,6 +20,7 @@ from tools.memory.store import (
     write_fact,
     write_run,
 )
+from reporting.reporter import report_job
 
 # --- vault-backed inbox (NOT git-tracked data/) ---
 AI_VAULT_ROOT = Path(os.environ.get("AI_VAULT_ROOT", "/srv/ai-vault")).expanduser().resolve()
@@ -70,6 +71,7 @@ def handle_payload(payload: dict[str, Any]) -> None:
         raise ValueError(f"Unknown kind: {kind!r}")
 
 
+@report_job("process_bot_inbox", job_type="AI Systems")
 def main() -> int:
     INBOX.mkdir(parents=True, exist_ok=True)
     PROCESSED.mkdir(parents=True, exist_ok=True)

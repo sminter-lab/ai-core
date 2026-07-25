@@ -10,6 +10,7 @@ from typing import Any
 from dotenv import load_dotenv
 from workers.schwab.client import get_client
 from tools.shared_store import raw_root
+from reporting.reporter import report_job
 
 
 # ===============================
@@ -116,6 +117,7 @@ def insert_run(conn: sqlite3.Connection, status: str, note: str | None = None) -
 # Main collector
 # ===============================
 
+@report_job("schwab_collector", job_type="Trading")
 def main() -> None:
     load_dotenv()
 

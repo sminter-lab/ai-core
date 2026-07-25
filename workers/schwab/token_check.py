@@ -22,6 +22,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from reporting.reporter import report_job
+
 WARN_DAYS   = 2      # notify this many days before expiry
 EXPIRY_DAYS = 7      # Schwab refresh token lifetime
 
@@ -36,6 +38,7 @@ def notify(title: str, body: str) -> None:
     )
 
 
+@report_job("schwab_token_check", job_type="Trading")
 def main() -> None:
     load_dotenv()
 

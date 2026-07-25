@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 # Uses your existing authenticated Schwab client factory:
 # - expected: get_client() returns a schwab-py Client instance
 from workers.schwab.client import get_client
+from reporting.reporter import report_job
 
 
 # =========================
@@ -215,6 +216,7 @@ def env_symbols() -> List[str]:
 # Main collector
 # =========================
 
+@report_job("schwab_options_collector", job_type="Trading")
 def main() -> None:
     load_dotenv()
 

@@ -17,6 +17,8 @@ import subprocess
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from reporting.reporter import report_job
+
 _ENV        = os.environ.get("AI_CORE_ENV", "live").strip().lower()
 STALE_HOURS = 36
 
@@ -45,6 +47,7 @@ def notify(title: str, body: str) -> None:
     subprocess.run(["osascript", "-e", script])
 
 
+@report_job("morning_digest", job_type="Finance")
 def main() -> None:
     print(f"[digest] env={_ENV}  reading from {_OUT_DIR}")
 

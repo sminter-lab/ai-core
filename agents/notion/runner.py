@@ -4,6 +4,7 @@ import sys
 
 from .protocol import parse_update_board
 from .store import NotionDashboardStore, load_config
+from reporting.reporter import report_job
 
 
 def run(text: str) -> int:
@@ -45,6 +46,7 @@ def run(text: str) -> int:
     return 0
 
 
+@report_job("notion_updater", job_type="AI Systems")
 def main() -> int:
     # Priority 1: if a file path argument is provided, ALWAYS use it
     if len(sys.argv) >= 2 and sys.argv[1]:
