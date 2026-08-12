@@ -196,11 +196,9 @@ def main() -> None:
                     instr.get("symbol"),
                     instr.get("assetType"),
                     p.get("longShort"),
-                    (
-                        p.get("longQuantity")
-                        if p.get("longQuantity") is not None
-                        else p.get("shortQuantity")
-                    ),
+                    # Net signed quantity — Schwab sends both fields, with the
+                    # inactive side as 0.0, so a None-check always picks long.
+                    (p.get("longQuantity") or 0.0) - (p.get("shortQuantity") or 0.0),
                     p.get("averagePrice"),
                     p.get("marketValue"),
                     jdump(p),
@@ -266,11 +264,7 @@ def main() -> None:
                 "symbol": instr.get("symbol"),
                 "asset_type": instr.get("assetType"),
                 "long_short": p.get("longShort"),
-                "quantity": (
-                    p.get("longQuantity")
-                    if p.get("longQuantity") is not None
-                    else p.get("shortQuantity")
-                ),
+                "quantity": (p.get("longQuantity") or 0.0) - (p.get("shortQuantity") or 0.0),
                 "average_price": p.get("averagePrice"),
                 "market_value": p.get("marketValue"),
             })
